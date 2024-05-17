@@ -1,0 +1,166 @@
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fr-db
+  namespace: olivia
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    ingress.kubernetes.io/ssl-host: fr-db.vendrus.teamfrag.net
+    ingress.kubernetes.io/ssl-redirect: 'true'
+    ingress.kubernetes.io/ssl-temporary-redirect: 'true'
+    kubernetes.io/ingress.allow-http: 'false'
+spec:
+  tls:
+    - hosts:
+        - fr-db.vendrus.teamfrag.net
+      secretName: fr-db-tls
+  rules:
+    - host: fr-db.vendrus.teamfrag.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fr-db
+                port:
+                  number: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fr-db
+  namespace: olivia
+  labels:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: backend
+spec:
+  ports:
+    - port: 80
+      name: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: backend
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fr-db
+  namespace: olivia
+  labels:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: backend
+spec:
+  serviceName: fr-db
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fr-db
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fr-db
+        app.kubernetes.io/component: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/vendrussci/fr-db:4.0.0
+          env:
+            - name: IMAGESTORE
+              value: /image-storage
+            - name: CONNECTIONSTRINGS__TOOLSDB
+              valueFrom:
+                secretKeyRef:
+                  name: fr-db-secrets
+                  key: db-connection-string
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: image-storage
+              mountPath: /image-storage
+  volumeClaimTemplates:
+    - metadata:
+        name: image-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "slow"
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: olivia
+  labels:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: database
+spec:
+  ports:
+    - port: 5432
+      name: postgresql
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: database
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: olivia
+  labels:
+    app.kubernetes.io/name: fr-db
+    app.kubernetes.io/component: database
+spec:
+  serviceName: postgresql
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fr-db
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fr-db
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgresql
+          image: postgres:14.4
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: fr-db-secrets
+                  key: default-db-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fr-db-secrets
+                  key: default-db-password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: fr-db-secrets
+                  key: default-db-name
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "slow"
+        resources:
+          requests:
+            storage: 512Mi
